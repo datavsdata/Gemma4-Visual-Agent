@@ -72,9 +72,10 @@ def draw_shapes(
     default_label = tuple(theme.get("overlay_label", (80, 80, 90)))
 
     if plot_bbox and len(plot_bbox) >= 4:
-        x0, _y0, x1, _y1 = (int(v) for v in plot_bbox[:4])
+        x0, y0, x1, y1 = (int(v) for v in plot_bbox[:4])
     else:
-        x0, x1 = 0, img.width - 1
+        x0, y0 = 0, 0
+        x1, y1 = img.width - 1, img.height - 1
 
     applied: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -103,6 +104,13 @@ def draw_shapes(
                 draw.line([(x0, y), (x1, y)], fill=color, width=width)
                 _draw_label(draw, (x0 + 8, y), label, font, default_label)
                 applied.append({**cmd, "_resolved": {"at": at, "y": y}})
+
+            elif shape == "vline":
+                at = resolve_ref(str(cmd["at"]), point_index)
+                x = at[0]
+                draw.line([(x, y0), (x, y1)], fill=color, width=width)
+                _draw_label(draw, (x + 4, y0 + 8), label, font, default_label)
+                applied.append({**cmd, "_resolved": {"at": at, "x": x}})
 
             elif shape == "polyline":
                 refs = cmd.get("points") or []

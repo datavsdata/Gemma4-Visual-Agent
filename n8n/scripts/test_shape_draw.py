@@ -72,6 +72,13 @@ def main() -> int:
             "width": 1,
         },
         {
+            "shape": "vline",
+            "at": "c20_c",
+            "label": "Event",
+            "color": "#ff9800",
+            "width": 1,
+        },
+        {
             "shape": "polyline",
             "points": ["c5_l", "c18_l", "c30_l"],
             "label": "Trend",
@@ -99,7 +106,9 @@ def main() -> int:
         }
     )
 
-    assert len(drawn["applied"]) == 3
+    assert len(drawn["applied"]) == 4
+    assert any(a.get("shape") == "vline" for a in drawn["applied"])
+    assert not any("vline" in e for e in drawn["errors"])
     assert any("c999" in e or "unknown" in e for e in drawn["errors"])
     assert drawn["crop_b64"]
     img_path = out_dir / drawn["cropped_image_name"]

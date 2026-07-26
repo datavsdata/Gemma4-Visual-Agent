@@ -1,0 +1,62 @@
+{
+  "id": "candleLabelPhase1",
+  "name": "Candle Label (Phase 1)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "candle-label",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-candle-label",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "candle-label"
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "from n8n_candle.candle_label_node import run\n\nitem = _items[0][\"json\"]\nif isinstance(item.get(\"body\"), dict):\n    item = {**item, **item[\"body\"]}\n\nresult = run(item)\nb64 = result.pop(\"crop_b64\", \"\") or \"\"\nname = result.get(\"cropped_image_name\") or \"chart.jpg\"\n\nif item.get(\"include_image_b64\") and b64:\n    result[\"crop_b64\"] = b64\n\nout = {\"json\": result}\nif b64:\n    out[\"binary\"] = {\n        \"chart\": {\n            \"data\": b64,\n            \"mimeType\": \"image/jpeg\",\n            \"fileName\": name,\n            \"fileExtension\": \"jpg\",\n        }\n    }\nreturn [out]\n"
+      },
+      "id": "python-candle-label",
+      "name": "Label Candles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notesInFlow": true,
+      "notes": "In Executions open this node → OUTPUT → Binary tab → chart to view the JPEG"
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "respond-candle-label",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Label Candles", "type": "main", "index": 0 }]]
+    },
+    "Label Candles": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "8"
+}

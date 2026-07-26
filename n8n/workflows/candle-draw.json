@@ -1,0 +1,780 @@
+{
+  "id": "candleDrawPhase2",
+  "name": "Candle Draw (Phase 2)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "candle-draw",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-candle-draw",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "candle-draw"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node \u2014 Unfold Dates\n// Webhook body \u2192 one item per calendar day in from..to (for Loop Dates).\n\nconst raw = $input.item.json;\nconst body =\n  raw && typeof raw.body === 'object' && raw.body ? { ...raw, ...raw.body } : { ...raw };\n\nconst nse_code = String(body.nse_code || body.symbol || '').trim().toUpperCase();\nconst fromStr = String(body.from || '').trim();\nconst toStr = String(body.to || '').trim();\n\nif (!nse_code) throw new Error('nse_code is required');\nif (!fromStr || !toStr) throw new Error('from and to are required (YYYY-MM-DD)');\n\nfunction parseIso(s) {\n  const m = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(s);\n  if (!m) throw new Error(`invalid date \"${s}\" \u2014 expected YYYY-MM-DD`);\n  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));\n  if (d.toISOString().slice(0, 10) !== s) throw new Error(`invalid calendar date \"${s}\"`);\n  return d;\n}\n\nconst from = parseIso(fromStr);\nconst to = parseIso(toStr);\nif (from > to) throw new Error(`from (${fromStr}) must be <= to (${toStr})`);\n\nconst theme = body.theme || 'tradingview_light';\nconst execution_id = String(body.execution_id || body.executionId || '').trim();\nconst items = [];\nfor (let t = from.getTime(); t <= to.getTime(); t += 86400000) {\n  const date = new Date(t).toISOString().slice(0, 10);\n  items.push({\n    json: {\n      nse_code,\n      date,\n      from: fromStr,\n      to: toStr,\n      theme,\n      source_name: nse_code.toLowerCase(),\n      ...(execution_id ? { execution_id } : {}),\n    },\n  });\n}\n\nreturn items;\n"
+      },
+      "id": "unfold-dates",
+      "name": "Unfold Dates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-dates",
+      "name": "Loop Dates",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "# n8n Python Code \u2014 Fetch OHLC as-of date from tips CSV.\n# If as-of date missing for symbol \u2192 {_skip: true}. Else last 200 bars as locked csv_text.\n# Adds SMA150 (Close SMA) on full history before trim. Peak/swing labels are added later\n# by the Peak Analysis node (uses csv_text_full for lookback).\n# Parse dates manually (runner may disallow the private _strptime module).\n\nimport csv\nfrom datetime import date\nfrom pathlib import Path\n\nCSV_PATH = Path(\"/data/tips_5years.csv\")\nMAX_BARS = 200\nSMA_PERIOD = 150\n\n_MONTHS = {\n    \"Jan\": 1, \"Feb\": 2, \"Mar\": 3, \"Apr\": 4, \"May\": 5, \"Jun\": 6,\n    \"Jul\": 7, \"Aug\": 8, \"Sep\": 9, \"Oct\": 10, \"Nov\": 11, \"Dec\": 12,\n}\n\n\ndef parse_iso(s):\n    parts = str(s).strip().split(\"-\")\n    if len(parts) != 3:\n        raise ValueError(s)\n    return date(int(parts[0]), int(parts[1]), int(parts[2]))\n\n\ndef parse_nse(s):\n    parts = str(s).strip().split(\"-\")\n    if len(parts) != 3:\n        raise ValueError(s)\n    mon = _MONTHS.get(parts[1])\n    if mon is None:\n        raise ValueError(s)\n    return date(int(parts[2]), mon, int(parts[0]))\n\n\ndef fmt_nse(d):\n    names = [\"Jan\", \"Feb\", \"Mar\", \"Apr\", \"May\", \"Jun\", \"Jul\", \"Aug\", \"Sep\", \"Oct\", \"Nov\", \"Dec\"]\n    return f\"{d.day:02d}-{names[d.month - 1]}-{d.year}\"\n\n\nitem = dict(_items[0][\"json\"])\nnse_code = str(item.get(\"nse_code\") or \"\").strip().upper()\nas_of_s = str(item.get(\"date\") or \"\").strip()\n\n\ndef skip(reason):\n    return [{\"json\": {**item, \"nse_code\": nse_code, \"date\": as_of_s, \"_skip\": True, \"_skip_reason\": reason}}]\n\n\nif not nse_code or not as_of_s:\n    return skip(\"missing nse_code or date\")\n\ntry:\n    as_of = parse_iso(as_of_s)\nexcept ValueError:\n    return skip(\"invalid as-of date \" + as_of_s)\n\nif not CSV_PATH.is_file():\n    raise FileNotFoundError(\"CSV not found: \" + str(CSV_PATH))\n\n\ndef parse_num(raw):\n    return float(str(raw).strip().replace(\",\", \"\").replace('\"', \"\"))\n\n\nrows = []\nwith CSV_PATH.open(newline=\"\", encoding=\"utf-8-sig\") as f:\n    reader = csv.DictReader(f)\n    field_map = {(h or \"\").strip(): h for h in (reader.fieldnames or [])}\n\n    def col(*names):\n        for n in names:\n            if n in field_map:\n                return field_map[n]\n        raise KeyError(names)\n\n    c_sym = col(\"Symbol\")\n    c_date = col(\"Date\")\n    c_series = col(\"Series\")\n    c_open = col(\"Open Price\")\n    c_high = col(\"High Price\")\n    c_low = col(\"Low Price\")\n    c_close = col(\"Close Price\")\n    c_prev = col(\"Prev Close\")\n    c_ltp = col(\"Last Price\")\n    c_vwap = col(\"Average Price\")\n    c_vol = col(\"Total Traded Quantity\")\n    try:\n        c_val = col(\"Turnover \u20b9\", \"Turnover\")\n    except KeyError:\n        c_val = None\n    c_tr = col(\"No. of Trades\")\n\n    for raw in reader:\n        sym = str(raw.get(c_sym) or \"\").strip().upper()\n        if sym != nse_code:\n            continue\n        try:\n            dt = parse_nse(str(raw.get(c_date) or \"\").strip())\n        except ValueError:\n            continue\n        if dt > as_of:\n            continue\n        rows.append(\n            (\n                dt,\n                {\n                    \"DATE\": fmt_nse(dt),\n                    \"SERIES\": str(raw.get(c_series) or \"EQ\").strip() or \"EQ\",\n                    \"OPEN\": parse_num(raw[c_open]),\n                    \"HIGH\": parse_num(raw[c_high]),\n                    \"LOW\": parse_num(raw[c_low]),\n                    \"PREV. CLOSE\": parse_num(raw[c_prev]),\n                    \"LTP\": parse_num(raw[c_ltp]),\n                    \"CLOSE\": parse_num(raw[c_close]),\n                    \"VWAP\": parse_num(raw[c_vwap]) if str(raw.get(c_vwap) or \"\").strip() else \"\",\n                    \"52W H\": \"\",\n                    \"52W L\": \"\",\n                    \"VOLUME\": parse_num(raw[c_vol]) if str(raw.get(c_vol) or \"\").strip() else \"\",\n                    \"VALUE\": parse_num(raw[c_val]) if c_val and str(raw.get(c_val) or \"\").strip() else \"\",\n                    \"NO. OF  TRADES\": parse_num(raw[c_tr]) if str(raw.get(c_tr) or \"\").strip() else \"\",\n                    \"SMA150\": \"\",\n                },\n            )\n        )\n\nif not any(dt == as_of for dt, _ in rows):\n    return skip(\"as-of date not in CSV\")\n\nrows.sort(key=lambda t: t[0])\nbars = [r for _, r in rows]\n\ncloses = [float(r[\"CLOSE\"]) for r in bars]\nfor i, r in enumerate(bars):\n    if i + 1 < SMA_PERIOD:\n        r[\"SMA150\"] = \"\"\n    else:\n        window = closes[i + 1 - SMA_PERIOD : i + 1]\n        r[\"SMA150\"] = round(sum(window) / SMA_PERIOD, 4)\n\nHEADER = (\n    \"DATE,SERIES,OPEN,HIGH,LOW,PREV. CLOSE,LTP,CLOSE,VWAP,52W H,52W L,\"\n    \"VOLUME,VALUE,NO. OF  TRADES,SMA150\"\n)\nkeys = [\n    \"DATE\", \"SERIES\", \"OPEN\", \"HIGH\", \"LOW\", \"PREV. CLOSE\", \"LTP\", \"CLOSE\",\n    \"VWAP\", \"52W H\", \"52W L\", \"VOLUME\", \"VALUE\", \"NO. OF  TRADES\", \"SMA150\",\n]\n\n\ndef cell(v):\n    if v is None or v == \"\":\n        return \"\"\n    s = str(v)\n    if any(ch in s for ch in '\",\\n'):\n        return '\"' + s.replace('\"', '\"\"') + '\"'\n    return s\n\n\ndef bars_to_csv(bar_list):\n    lines = [HEADER]\n    for r in bar_list:\n        lines.append(\",\".join(cell(r[k]) for k in keys))\n    return \"\\n\".join(lines) + \"\\n\"\n\n\ncsv_text_full = bars_to_csv(bars)\nchart_bars = bars[-MAX_BARS:] if len(bars) > MAX_BARS else bars\ncsv_text = bars_to_csv(chart_bars)\n\nreturn [\n    {\n        \"json\": {\n            **item,\n            \"nse_code\": nse_code,\n            \"date\": as_of_s,\n            \"from\": item.get(\"from\"),\n            \"to\": item.get(\"to\"),\n            \"theme\": item.get(\"theme\") or \"tradingview_light\",\n            \"source_name\": item.get(\"source_name\") or nse_code.lower(),\n            \"csv_text\": csv_text,\n            \"csv_text_full\": csv_text_full,\n            \"bar_count\": len(chart_bars),\n            \"bar_count_full\": len(bars),\n            \"_skip\": False,\n        }\n    }\n]\n"
+      },
+      "id": "fetch-ohlc",
+      "name": "Fetch OHLC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "notesInFlow": true,
+      "notes": "Python CSV as-of last 200; _skip if date missing"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "not-skip",
+              "leftValue": "={{ $json._skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-rows",
+      "name": "IF Has Rows",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1140,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "\"\"\"n8n Code node snippet \u2014 Label Candles step in the Phase 2 draw workflow.\n\nPaste into Label Candles (Language = Python).\nExpects Peak Analysis upstream: csv_text (+ optional swings[]) for H/L/HH/\u2026 overlays.\n\"\"\"\n\nfrom n8n_candle.candle_label_node import run\nfrom n8n_candle.point_index import agent_context, build_point_index\n\nitem = _items[0][\"json\"]\nif isinstance(item.get(\"body\"), dict):\n    item = {**item, **item[\"body\"]}\n\nresult = run(item)\nresult[\"point_index\"] = build_point_index(result[\"candles\"])\nresult[\"agent_context\"] = agent_context(result[\"candles\"])\n\n# Keep peak-analysis metadata for downstream / debugging\nfor k in (\"date\", \"from\", \"to\", \"execution_id\", \"swings\", \"swing_count\", \"peak_analysis\"):\n    if item.get(k) is not None:\n        result[k] = item[k]\n\n# Pass through agent geometry (webhook body or prior node)\nif item.get(\"draw_commands\") is not None:\n    result[\"draw_commands\"] = item[\"draw_commands\"]\n\nb64 = result.pop(\"crop_b64\", \"\") or \"\"\nname = result.get(\"cropped_image_name\") or \"chart.jpg\"\n\nif item.get(\"include_image_b64\") and b64:\n    result[\"crop_b64\"] = b64\n\nout = {\"json\": result}\nif b64:\n    out[\"binary\"] = {\n        \"chart\": {\n            \"data\": b64,\n            \"mimeType\": \"image/jpeg\",\n            \"fileName\": name,\n            \"fileExtension\": \"jpg\",\n        }\n    }\nreturn [out]\n"
+      },
+      "id": "python-label-candles",
+      "name": "Label Candles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ `Symbol: ${$json.nse_code}\\nTheme: ${$json.theme}\\nCandle count: ${$json.candle_count}\\n\\nCandle labels (use ONLY these IDs; each line is: c{n} color pattern o,h,l,c):\\n${$json.agent_context}\\n\\nTask: Identify clear support / resistance / pivot / trend structure.\\nReturn JSON matching the EXPECTED OUTPUT SCHEMA in your system instructions (output.draw_commands wrapper).` }}",
+        "hasOutputParser": true,
+        "options": {
+          "passthroughBinaryImages": true,
+          "systemMessage": "You are a chart geometry assistant for candlestick charts.\n\nYour output is consumed directly by the Draw Shapes node. Emit draw_commands only \u2014 candle label IDs, never pixel coordinates.\n\nOUTPUT FORMAT (Structured Output Parser \u2014 match exactly)\n- Root MUST be: { \"output\": { \"draw_commands\": [ ... ] } }\n- Do NOT return draw_commands at the top level without the output wrapper.\n- EVERY command object MUST include ALL keys: shape, from, to, at, points, label, color, width\n- Do NOT use empty string \"\" or null for unused fields. Duplicate a real ref from the same command:\n  \u2022 line (uses from/to): set at=from, points=[from, to]\n  \u2022 hline (uses at): set from=at, to=at, points=[at]\n  \u2022 polyline (uses points): set from=points[0], to=points[last], at=points[0]\n- NEVER return {} or an empty object. Return compact JSON only (no markdown). Max 5 commands.\n\nEXPECTED OUTPUT SCHEMA\n{\n  \"output\": {\n    \"draw_commands\": [\n      {\n        \"shape\": \"line\",\n        \"from\": \"c12_l\",\n        \"to\": \"c45_l\",\n        \"at\": \"c12_l\",\n        \"points\": [\"c12_l\", \"c45_l\"],\n        \"label\": \"Support\",\n        \"color\": \"#2962ff\",\n        \"width\": 2\n      },\n      {\n        \"shape\": \"hline\",\n        \"from\": \"c30_c\",\n        \"to\": \"c30_c\",\n        \"at\": \"c30_c\",\n        \"points\": [\"c30_c\"],\n        \"label\": \"Pivot\",\n        \"color\": \"#e91e63\",\n        \"width\": 1\n      },\n      {\n        \"shape\": \"polyline\",\n        \"from\": \"c5_l\",\n        \"to\": \"c40_l\",\n        \"at\": \"c5_l\",\n        \"points\": [\"c5_l\", \"c18_l\", \"c40_l\"],\n        \"label\": \"Trend\",\n        \"color\": \"#26a69a\",\n        \"width\": 2\n      }\n    ]\n  }\n}\nEmpty result: { \"output\": { \"draw_commands\": [] } }\n\nRULES\n1. Follow the EXPECTED OUTPUT SCHEMA exactly.\n2. Each command MUST use key \"shape\" (never \"type\"): line | hline | polyline.\n3. Candle refs MUST be c{index}_{o|h|l|c} from the provided candle list only.\n4. Prefer _l for support, _h for resistance, _c for pivots.\n5. Return 1\u20135 commands. If nothing clear, return empty draw_commands per OUTPUT FORMAT.\n\nSHAPE REQUIREMENTS\n| shape     | required fields      |\n| line      | from, to             |\n| hline     | at                   |\n| polyline  | points[] (\u22652 refs)   |\n\nCOLORS: Support #2962ff | Resistance/Pivot #e91e63 | Trend #26a69a"
+        }
+      },
+      "id": "bfc17d45-6d88-4958-8607-78ae27a6b842",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1620,
+        160
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gemma4",
+          "mode": "list",
+          "cachedResultName": "gemma4"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "931bb688-152f-4264-99e7-6cadc7610cf8",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1520,
+        380
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "fLCcAYbtgOJJLuOw",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"output\": {\n    \"summary\": \"Brief Stage Analysis summary.\",\n    \"draw_commands\": [\n      {\n        \"shape\": \"hline\",\n        \"at\": \"c88_l\",\n        \"label\": \"Base Support\",\n        \"color\": \"#2962ff\",\n        \"width\": 2\n      }\n    ]\n  }\n}"
+      },
+      "id": "structured-output-parser-draw",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1620,
+        380
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node \u2014 Merge Chart Context (JavaScript)\n// Place between AI Agent (with Structured Output Parser) and Draw Shapes.\n// Preserves prior_day + prior_chart from Attach Prior Day Context for Validation.\n\nconst prev = $('Label Candles').item;\nconst agent = $input.item.json;\n\nlet attach = null;\ntry {\n  attach = $('Attach Prior Day Context').item;\n} catch {\n  attach = null;\n}\n\nfunction parseJson(text) {\n  const t = String(text).trim()\n    .replace(/^```(?:json)?\\s*/i, '')\n    .replace(/\\s*```$/i, '')\n    .trim();\n  try { return JSON.parse(t); } catch {\n    const m = t.match(/\\{[\\s\\S]*\\}/);\n    if (m) return JSON.parse(m[0]);\n  }\n  return null;\n}\n\n// Resolve the inner object from agent output.\n// AI Agent emits one of:\n//   {output: {summary, draw_commands}}    <- parser parsed it\n//   {output: \"```json\\n{...}\\n```\"}       <- parser passed through raw string\n//   {output: \"{...}\"}                     <- raw JSON string\nfunction resolveInner(data) {\n  if (!data) return null;\n  // Already a parsed object with draw_commands or summary at top level\n  if (Array.isArray(data.draw_commands) || typeof data.summary === 'string') return data;\n  // output is already an object\n  if (data.output && typeof data.output === 'object' && !Array.isArray(data.output)) {\n    return data.output;\n  }\n  // output is a string \u2014 strip fences and parse\n  const raw = data.output ?? data.text ?? data.response;\n  if (typeof raw === 'string') {\n    const parsed = parseJson(raw);\n    if (!parsed) return null;\n    // model returned { \"output\": { ... } }\n    if (parsed.output && typeof parsed.output === 'object') return parsed.output;\n    // model returned { \"draw_commands\": [...], \"summary\": \"...\" }\n    if (Array.isArray(parsed.draw_commands) || typeof parsed.summary === 'string') return parsed;\n  }\n  return null;\n}\n\nfunction extractCommands(data) {\n  const inner = resolveInner(data);\n  if (inner && Array.isArray(inner.draw_commands)) return inner.draw_commands;\n  if (data && Array.isArray(data.draw_commands)) return data.draw_commands;\n  return null;\n}\n\nfunction extractSummary(data) {\n  if (!data) return null;\n  const inner = resolveInner(data);\n  if (inner && typeof inner.summary === 'string' && inner.summary.trim()) return inner.summary.trim();\n  if (typeof data.summary === 'string' && data.summary.trim()) return data.summary.trim();\n  return null;\n}\n\nlet cmds = extractCommands(agent);\nlet agentFailed = false;\nif (!Array.isArray(cmds)) {\n  // Do not fail the date loop when the model returns empty structured output.\n  // Draw Shapes will no-op overlays; Stage Store skips if summary is empty.\n  agentFailed = true;\n  cmds = [];\n}\n\ncmds = cmds.map((c) => {\n  if (!c || typeof c !== 'object') return c;\n  const out = { ...c };\n  if (!out.shape && out.type) out.shape = out.type;\n  delete out.type;\n  const shape = String(out.shape || '').toLowerCase();\n  if (shape === 'line') { delete out.at; delete out.points; }\n  else if (shape === 'hline') { delete out.from; delete out.to; delete out.points; }\n  else if (shape === 'polyline') { delete out.from; delete out.to; delete out.at; }\n  return out;\n});\n\nconst summary = extractSummary(agent);\nconst json = { ...prev.json, draw_commands: cmds };\nif (summary) json.summary = summary;\nelse if (agentFailed) {\n  json.summary = '';\n  json._agent_output_missing = true;\n}\n\n// Carry prior-day context (fetched before draw AI Agent) downstream to Validation.\nif (attach && attach.json && Object.prototype.hasOwnProperty.call(attach.json, 'prior_day')) {\n  json.prior_day = attach.json.prior_day;\n}\n\nconst out = { json, binary: { ...(prev.binary || {}) } };\nif (attach && attach.binary && attach.binary.prior_chart) {\n  out.binary.prior_chart = attach.binary.prior_chart;\n}\nreturn [out];\n"
+      },
+      "id": "merge-chart-context",
+      "name": "Merge Chart Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1860,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "\"\"\"n8n Code node snippet \u2014 Draw Shapes (Language = Python).\n\nAttaches annotated JPEG as binary `chart` for the Executions image viewer\n(same pattern as Label Candles / Phase 1). Preserves prior_day + prior_chart\nfor the Validation AI Agent.\n\"\"\"\n\nfrom n8n_candle.shape_draw_node import run\n\nitem = dict(_items[0][\"json\"])\nif isinstance(item.get(\"body\"), dict):\n    item = {**item, **item[\"body\"]}\n\nchart_b64 = item.get(\"crop_b64\")\nbinary = _items[0].get(\"binary\") or {}\nif not chart_b64 and isinstance(binary, dict):\n    chart = binary.get(\"chart\") or binary.get(\"data\") or {}\n    if isinstance(chart, dict):\n        chart_b64 = chart.get(\"data\")\n\nresult = run(item, chart_b64=chart_b64)\nresult.pop(\"_binary_chart\", None)\nb64 = result.pop(\"crop_b64\", \"\") or \"\"\nname = result.get(\"cropped_image_name\") or \"chart_drawn.jpg\"\n\nfor k in (\"date\", \"from\", \"to\", \"summary\", \"execution_id\", \"prior_day\"):\n    if item.get(k) is not None and result.get(k) is None:\n        result[k] = item[k]\n\nif item.get(\"include_image_b64\") and b64:\n    result[\"crop_b64\"] = b64\n\nout = {\"json\": result}\nout_binary = {}\nif b64:\n    out_binary[\"chart\"] = {\n        \"data\": b64,\n        \"mimeType\": \"image/jpeg\",\n        \"fileName\": name,\n        \"fileExtension\": \"jpg\",\n    }\n# Keep yesterday's drawn chart for Validation AI Agent.\nif isinstance(binary, dict) and isinstance(binary.get(\"prior_chart\"), dict):\n    out_binary[\"prior_chart\"] = binary[\"prior_chart\"]\nif out_binary:\n    out[\"binary\"] = out_binary\nreturn [out]\n"
+      },
+      "id": "python-draw-shapes",
+      "name": "Draw Shapes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "# Stage annotated chart for DuckDB insert (files under /data/charts).\n\nimport base64\nimport csv\nfrom pathlib import Path\n\nitem = dict(_items[0][\"json\"])\nbinary = _items[0].get(\"binary\") or {}\nchart = binary.get(\"chart\") or binary.get(\"data\") or {}\nb64 = chart.get(\"data\") if isinstance(chart, dict) else \"\"\nsummary = (item.get(\"summary\") or \"\").strip()\nnse_code = str(item.get(\"nse_code\") or \"\").strip().upper()\nas_of = str(item.get(\"date\") or item.get(\"as_of_date\") or \"\").strip()\nfrom_date = str(item.get(\"from\") or item.get(\"from_date\") or \"\")\nto_date = str(item.get(\"to\") or item.get(\"to_date\") or \"\")\nreview_comments = str(item.get(\"review_comments\") or \"\").strip()\nsignal = str(item.get(\"signal\") or \"HOLD\").strip().upper()\nif signal not in (\"BUY\", \"SELL\", \"HOLD\"):\n    signal = \"HOLD\"\ntry:\n    confidence = int(item.get(\"confidence\") if item.get(\"confidence\") is not None else 0)\nexcept (TypeError, ValueError):\n    confidence = 0\nconfidence = max(0, min(100, confidence))\nexecution_id = str(item.get(\"execution_id\") or \"\").strip()\nout = {\"json\": dict(item), \"binary\": binary}\nif not summary or not b64 or not nse_code or not as_of:\n    out[\"json\"][\"stored\"] = False\n    out[\"json\"][\"_store_skip\"] = True\n    return [out]\ncharts = Path(\"/data/charts\")\ncharts.mkdir(parents=True, exist_ok=True)\nstem = f\"{nse_code}_{as_of}\"\nimage_path = charts / f\"{stem}.jpg\"\nmeta_path = charts / f\"{stem}.meta.csv\"\nimage_path.write_bytes(base64.b64decode(b64))\nwith meta_path.open(\"w\", newline=\"\", encoding=\"utf-8\") as f:\n    w = csv.DictWriter(\n        f,\n        fieldnames=[\n            \"nse_code\",\n            \"as_of_date\",\n            \"from_date\",\n            \"to_date\",\n            \"summary\",\n            \"image_path\",\n            \"review_comments\",\n            \"signal\",\n            \"confidence\",\n            \"execution_id\",\n        ],\n    )\n    w.writeheader()\n    w.writerow(\n        {\n            \"nse_code\": nse_code,\n            \"as_of_date\": as_of,\n            \"from_date\": from_date,\n            \"to_date\": to_date,\n            \"summary\": summary,\n            \"image_path\": str(image_path),\n            \"review_comments\": review_comments,\n            \"signal\": signal,\n            \"confidence\": confidence,\n            \"execution_id\": execution_id,\n        }\n    )\nout[\"json\"][\"image_path\"] = str(image_path)\nout[\"json\"][\"meta_path\"] = str(meta_path)\nout[\"json\"][\"_store_skip\"] = False\nreturn [out]\n"
+      },
+      "id": "stage-store",
+      "name": "Stage Store",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "store-ok",
+              "leftValue": "={{ $json._store_skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-store",
+      "name": "IF Store",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3300,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=META_PATH='{{$json.meta_path}}' IMAGE_PATH='{{$json.image_path}}' RESULTS_DB='/data/candle_draw_results.duckdb' NODE_PATH=/opt/n8n-community-nodes/node_modules node /scripts/insert_chart_analysis.js"
+      },
+      "id": "exec-store",
+      "name": "Insert DuckDB",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        3520,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Draw Shapes').item;\nconst staged = $('Stage Store').item?.json || {};\nconst json = { ...(prev.json || {}) };\njson.stored = staged.stored === true || staged._store_skip === false;\nif (staged.image_path) json.image_path = staged.image_path;\njson.results_db = '/data/candle_draw_results.duckdb';\nconst out = { json };\nif (prev.binary) out.binary = prev.binary;\nreturn [out];\n"
+      },
+      "id": "passthrough-store",
+      "name": "Pass Through Store",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const u = $('Unfold Dates').first().json;\nreturn [{ json: { ok: true, nse_code: u.nse_code, from: u.from, to: u.to, theme: u.theme,\n  execution_id: u.execution_id || null,\n  results_db: '/data/candle_draw_results.duckdb',\n  message: 'Finished date sweep. Stored rows only when as-of date existed and draw+summary succeeded.' } }];\n"
+      },
+      "id": "build-response",
+      "name": "Build Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "respond-candle-draw",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=NSE_CODE='{{$json.nse_code}}' AS_OF_DATE='{{$json.date}}' RESULTS_DB='/data/candle_draw_results.duckdb' NODE_PATH=/opt/n8n-community-nodes/node_modules node /scripts/query_prior_analysis.js"
+      },
+      "id": "fetch-prior-analysis",
+      "name": "Fetch Prior Analysis",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node \u2014 Prepare Validation Context\n// Draw Shapes + Fetch Prior Analysis + prior-day context (same as draw AI Agent).\n// Forwards prior_day summary into validation_context and prior_chart binary.\n\nconst draw = $('Draw Shapes').item;\nconst fetchOut = $('Fetch Prior Analysis').first().json || {};\n\nlet prior = [];\ntry {\n  const parsed = JSON.parse(String(fetchOut.stdout || '{}').trim());\n  prior = Array.isArray(parsed.prior) ? parsed.prior : [];\n} catch {\n  prior = [];\n}\n\n// Same prior-day payload already fetched before the draw AI Agent.\nlet attach = null;\ntry {\n  attach = $('Attach Prior Day Context').item;\n} catch {\n  attach = null;\n}\n\nconst j = { ...(draw.json || {}) };\nconst nse = String(j.nse_code || '').trim().toUpperCase();\nconst asOf = String(j.date || j.as_of_date || '').trim();\nconst todaySummary = String(j.summary || '').trim();\n\nconst priorDay =\n  (j.prior_day && typeof j.prior_day === 'object' ? j.prior_day : null)\n  || (attach && attach.json && attach.json.prior_day && typeof attach.json.prior_day === 'object'\n    ? attach.json.prior_day\n    : null);\n\nconst priorLines = prior.length\n  ? prior.map((r) => `- ${r.as_of_date}: ${String(r.summary || '').trim()}`).join('\\n')\n  : '(none \u2014 first stored analysis for this symbol)';\n\nconst priorDayBlock = priorDay && (priorDay.summary || priorDay.as_of_date)\n  ? [\n      `Prior day (${priorDay.as_of_date || 'unknown'}) summary: ${String(priorDay.summary || '').trim() || '(none)'}`,\n      priorDay.has_image\n        ? 'Prior day drawn chart is attached as image input (prior_chart).'\n        : 'Prior day drawn chart: not available.',\n      '',\n    ]\n  : ['Prior day context: (none)', ''];\n\nconst validation_context = [\n  `Symbol: ${nse}`,\n  `As-of: ${asOf}`,\n  '',\n  ...priorDayBlock,\n  'Prior analyses (newest first, up to 5 trading days before as-of):',\n  priorLines,\n  '',\n  \"Today's analysis:\",\n  todaySummary || '(empty)',\n  '',\n  'Task: Compare today vs prior sessions. Note trend shifts, support/resistance consistency, and risk.',\n  'Return review_comments, signal (BUY|SELL|HOLD), confidence (0-100 integer).',\n].join('\\n');\n\nconst outBinary = { ...(draw.binary || {}) };\nconst attachPrior =\n  attach && attach.binary && attach.binary.prior_chart\n    ? attach.binary.prior_chart\n    : null;\nif (attachPrior && !outBinary.prior_chart) {\n  outBinary.prior_chart = attachPrior;\n}\n\nreturn [{\n  json: {\n    ...j,\n    prior_day: priorDay,\n    validation_context,\n    prior_count: prior.length,\n  },\n  binary: outBinary,\n}];\n"
+      },
+      "id": "prepare-validation-context",
+      "name": "Prepare Validation Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.validation_context }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a trading chart validation reviewer for NSE equities.\n\nYou receive summaries from up to 5 prior stored chart analyses plus today's analysis for the same symbol.\nAssess consistency, trend evolution, and actionable bias \u2014 not chart geometry.\n\nOUTPUT FORMAT (Structured Output Parser \u2014 match exactly)\n- Root MUST be: { \"output\": { \"review_comments\": \"...\", \"signal\": \"BUY|SELL|HOLD\", \"confidence\": 0-100 } }\n- signal MUST be exactly one of: BUY, SELL, HOLD\n- confidence MUST be an integer 0\u2013100\n- review_comments: 2\u20135 sentences referencing prior vs today where relevant\n- Return compact JSON only (no markdown fences)\n\nRULES\n1. Compare today's summary against prior sessions when prior data exists.\n2. If no prior data, base signal only on today's analysis; note limited history in review_comments.\n3. HOLD when setup is unclear, conflicting, or range-bound without edge.\n4. Do not invent price levels not mentioned in the summaries.",
+          "passthroughBinaryImages": true
+        }
+      },
+      "id": "validation-ai-agent",
+      "name": "Validation AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2640,
+        160
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"output\": {\n    \"review_comments\": \"Support held; momentum improving vs last 3 sessions.\",\n    \"signal\": \"BUY\",\n    \"confidence\": 72\n  }\n}"
+      },
+      "id": "validation-output-parser",
+      "name": "Validation Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        2640,
+        380
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node \u2014 Merge Validation\n// Attach validation agent output onto Draw Shapes payload before Stage Store.\n\nconst base = $('Prepare Validation Context').item;\nconst agent = $input.item.json;\n\nfunction parseJson(text) {\n  const t = String(text).trim()\n    .replace(/^```(?:json)?\\s*/i, '')\n    .replace(/\\s*```$/i, '')\n    .trim();\n  try { return JSON.parse(t); } catch {\n    const m = t.match(/\\{[\\s\\S]*\\}/);\n    if (m) return JSON.parse(m[0]);\n  }\n  return null;\n}\n\nfunction resolveInner(data) {\n  if (!data) return null;\n  if (typeof data.review_comments === 'string' || data.signal || data.confidence != null) return data;\n  if (data.output && typeof data.output === 'object' && !Array.isArray(data.output)) return data.output;\n  const raw = data.output ?? data.text ?? data.response;\n  if (typeof raw === 'string') {\n    const parsed = parseJson(raw);\n    if (!parsed) return null;\n    if (parsed.output && typeof parsed.output === 'object') return parsed.output;\n    return parsed;\n  }\n  return null;\n}\n\nfunction normalizeSignal(s) {\n  const v = String(s || '').trim().toUpperCase();\n  if (v === 'BUY' || v === 'SELL' || v === 'HOLD') return v;\n  return 'HOLD';\n}\n\nfunction normalizeConfidence(v) {\n  const n = Number(v);\n  if (!Number.isFinite(n)) return 0;\n  return Math.max(0, Math.min(100, Math.round(n)));\n}\n\nconst inner = resolveInner(agent) || {};\nconst json = {\n  ...(base.json || {}),\n  review_comments: String(inner.review_comments || '').trim(),\n  signal: normalizeSignal(inner.signal),\n  confidence: normalizeConfidence(inner.confidence),\n};\n\nconst out = { json };\nif (base.binary) out.binary = base.binary;\nreturn [out];\n"
+      },
+      "id": "merge-validation",
+      "name": "Merge Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "\"\"\"n8n Code node \u2014 Peak Analysis (before Label Candles).\n\nDetects significant peaks/valleys (ben-arnao), classifies H/L/HH/HL/LH/LL\nvs prior same-type swings on full history, then annotates the chart window.\n\nInput:  csv_text (chart window), optional csv_text_full (full lookback)\nOutput: csv_text with SWING column, swings[] for Label Candles placement\n\"\"\"\n\nfrom n8n_candle.ohlc_csv import load_ohlc_text\nfrom n8n_candle.swing_annotate import (\n    DEFAULT_BETA,\n    DEFAULT_COM,\n    DEFAULT_MAX_BARS,\n    DEFAULT_MIN_PERIODS,\n    DEFAULT_PIVOT_K,\n    build_swings_for_chart,\n    swings_to_csv_column,\n)\n\nitem = dict(_items[0][\"json\"])\nif isinstance(item.get(\"body\"), dict):\n    item = {**item, **item[\"body\"]}\n\ncsv_full = item.get(\"csv_text_full\") or item.get(\"csv_text\")\ncsv_chart = item.get(\"csv_text\") or csv_full\nif not isinstance(csv_full, str) or not csv_full.strip():\n    raise ValueError(\"csv_text_full or csv_text is required for Peak Analysis\")\n\ncom = float(item.get(\"pv_com\") or DEFAULT_COM)\nbeta = float(item.get(\"pv_beta\") or DEFAULT_BETA)\nmin_periods = int(item.get(\"pv_min_periods\") or DEFAULT_MIN_PERIODS)\npivot_k = int(item.get(\"pv_pivot_k\") if item.get(\"pv_pivot_k\") is not None else DEFAULT_PIVOT_K)\nmax_bars = int(item.get(\"max_bars\") or DEFAULT_MAX_BARS)\n\nfull_candles = load_ohlc_text(csv_full, source=\"peak_full\")\n_chart_candles, swings = build_swings_for_chart(\n    full_candles,\n    max_bars=max_bars,\n    com=com,\n    beta=beta,\n    min_periods=min_periods,\n    pivot_k=pivot_k,\n)\n\n# Annotate the chart-window CSV (last max_bars) with SWING for Label Candles\nchart_lines = csv_chart.strip().splitlines()\nif len(chart_lines) > max_bars + 1:\n    # Safety: keep header + last max_bars if someone passed full as csv_text\n    csv_chart = \"\\n\".join([chart_lines[0], *chart_lines[-(max_bars):]]) + \"\\n\"\n\nannotated_csv = swings_to_csv_column(csv_chart, swings)\n\nout = {\n    **item,\n    \"csv_text\": annotated_csv,\n    \"swings\": swings,\n    \"swing_count\": len(swings),\n    \"peak_analysis\": {\n        \"com\": com,\n        \"beta\": beta,\n        \"min_periods\": min_periods,\n        \"pivot_k\": pivot_k,\n        \"full_bars\": len(full_candles),\n        \"chart_bars\": len(_chart_candles),\n        \"labels\": sorted({s[\"label\"] for s in swings}),\n    },\n}\nreturn [{\"json\": out}]\n",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "peak-analysis",
+      "name": "Peak Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=NSE_CODE='{{$json.nse_code}}' AS_OF_DATE='{{$json.date}}' EXECUTION_ID='{{$json.execution_id || \"\"}}' RESULTS_DB='/data/candle_draw_results.duckdb' NODE_PATH=/opt/n8n-community-nodes/node_modules node /scripts/query_prior_day_context.js"
+      },
+      "id": "fetch-prior-day-context",
+      "name": "Fetch Prior Day Context",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node \u2014 Attach Prior Day Context\n// When a prior DuckDB analysis exists:\n//   - prepend its summary into agent_context (AI Agent prompt unchanged)\n//   - attach resized prior drawn JPEG as binary.prior_chart\n// Always keep today's labeled chart as binary.chart (two separate JPGs).\n\nconst labeled = $('Label Candles').item;\nconst prep = $input.first().json || {};\n\nlet prior = null;\nif (prep.prior && typeof prep.prior === 'object') {\n  prior = prep.prior;\n} else {\n  try {\n    const parsed = JSON.parse(String(prep.stdout || '{}').trim());\n    if (parsed && parsed.prior && typeof parsed.prior === 'object') prior = parsed.prior;\n  } catch {\n    prior = null;\n  }\n}\n\nconst json = { ...(labeled.json || {}) };\nlet agentContext = String(json.agent_context || '');\n\nif (prior && (prior.summary || prior.image_base64)) {\n  const asOf = String(prior.as_of_date || '').trim() || 'unknown';\n  let summary = String(prior.summary || '').trim();\n  const MAX_PRIOR_SUMMARY = 500;\n  if (summary.length > MAX_PRIOR_SUMMARY) {\n    summary = `${summary.slice(0, MAX_PRIOR_SUMMARY).trim()}\u2026`;\n  }\n\n  if (summary) {\n    agentContext = [\n      `Prior day (${asOf}) summary: ${summary}`,\n      '',\n      agentContext,\n    ].join('\\n');\n  }\n\n  json.prior_day = {\n    as_of_date: asOf,\n    summary: summary || null,\n    has_image: !!prior.image_base64,\n  };\n} else {\n  json.prior_day = null;\n}\n\njson.agent_context = agentContext;\n\n// Two separate images when prior exists:\n//   binary.chart       \u2014 today's labeled chart (from Label Candles)\n//   binary.prior_chart \u2014 previous day's drawn analysis JPEG\nconst out = { json, binary: { ...(labeled.binary || {}) } };\nconst imageB64 = prior && prior.image_base64 ? String(prior.image_base64) : '';\nif (imageB64) {\n  out.binary.prior_chart = {\n    data: imageB64,\n    mimeType: 'image/jpeg',\n    fileName: `prior_${json.prior_day?.as_of_date || 'day'}.jpg`,\n    fileExtension: 'jpg',\n  };\n}\n\nreturn [out];\n",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "attach-prior-day-context",
+      "name": "Attach Prior Day Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "\"\"\"n8n Code node \u2014 Prepare Prior Day Image (Python).\n\nLoads the prior drawn JPEG as-is (no resize) and exposes image_base64 for Attach.\nToday's labeled chart stays separate as binary.chart.\n\"\"\"\n\nimport base64\nimport json\nfrom pathlib import Path\n\nitem = dict(_items[0][\"json\"])\n\nprior = None\ntry:\n    parsed = json.loads(str(item.get(\"stdout\") or \"{}\").strip())\n    if isinstance(parsed, dict) and isinstance(parsed.get(\"prior\"), dict):\n        prior = parsed[\"prior\"]\nexcept Exception:\n    prior = None\n\nif prior is None and isinstance(item.get(\"prior\"), dict):\n    prior = item[\"prior\"]\n\nif prior:\n    image_path = str(prior.get(\"image_path\") or \"\").strip()\n    p = Path(image_path) if image_path else None\n    image_base64 = None\n    image_bytes = None\n    if p and p.is_file() and p.stat().st_size >= 1024:\n        raw = p.read_bytes()\n        image_base64 = base64.b64encode(raw).decode(\"ascii\")\n        image_bytes = len(raw)\n\n    prior = {\n        \"as_of_date\": prior.get(\"as_of_date\"),\n        \"summary\": prior.get(\"summary\"),\n        \"image_path\": prior.get(\"image_path\"),\n        \"execution_id\": prior.get(\"execution_id\"),\n        \"image_base64\": image_base64,\n        \"image_bytes\": image_bytes,\n        \"image_resized\": False,\n    }\n\nitem[\"prior\"] = prior\nitem[\"stdout\"] = json.dumps(\n    {\n        \"ok\": True,\n        \"prior\": (\n            None\n            if prior is None\n            else {\n                \"as_of_date\": prior.get(\"as_of_date\"),\n                \"summary\": prior.get(\"summary\"),\n                \"image_path\": prior.get(\"image_path\"),\n                \"execution_id\": prior.get(\"execution_id\"),\n                \"has_image\": bool(prior.get(\"image_base64\")),\n                \"image_bytes\": prior.get(\"image_bytes\"),\n            }\n        ),\n    }\n)\nreturn [{\"json\": item}]\n",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "prepare-prior-day-image",
+      "name": "Prepare Prior Day Image",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1530,
+        160
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Unfold Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unfold Dates": {
+      "main": [
+        [
+          {
+            "node": "Loop Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Dates": {
+      "main": [
+        [
+          {
+            "node": "Build Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch OHLC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch OHLC": {
+      "main": [
+        [
+          {
+            "node": "IF Has Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Has Rows": {
+      "main": [
+        [
+          {
+            "node": "Peak Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Candles": {
+      "main": [
+        [
+          {
+            "node": "Fetch Prior Day Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Merge Chart Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Validation AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Chart Context": {
+      "main": [
+        [
+          {
+            "node": "Draw Shapes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draw Shapes": {
+      "main": [
+        [
+          {
+            "node": "Fetch Prior Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage Store": {
+      "main": [
+        [
+          {
+            "node": "IF Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Store": {
+      "main": [
+        [
+          {
+            "node": "Insert DuckDB",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert DuckDB": {
+      "main": [
+        [
+          {
+            "node": "Pass Through Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pass Through Store": {
+      "main": [
+        [
+          {
+            "node": "Loop Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Prior Analysis": {
+      "main": [
+        [
+          {
+            "node": "Prepare Validation Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Validation Context": {
+      "main": [
+        [
+          {
+            "node": "Validation AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Merge Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Validation": {
+      "main": [
+        [
+          {
+            "node": "Stage Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Validation AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Peak Analysis": {
+      "main": [
+        [
+          {
+            "node": "Label Candles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Prior Day Context": {
+      "main": [
+        [
+          {
+            "node": "Prepare Prior Day Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Prior Day Context": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Prior Day Image": {
+      "main": [
+        [
+          {
+            "node": "Attach Prior Day Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n.dataversusdata.com",
+            "content-type": "application/json"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "nse_code": "TIPSMUSIC",
+            "from": "2026-04-23",
+            "to": "2026-05-07",
+            "theme": "tradingview_light",
+            "execution_id": "pin-TIPSMUSIC-20260423-20260507"
+          },
+          "webhookUrl": "https://n8n.dataversusdata.com/webhook/candle-draw",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "versionId": "9"
+}

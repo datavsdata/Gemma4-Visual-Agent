@@ -1,0 +1,27 @@
+---
+description: Never edit n8n AI Agent prompts — they are maintained manually
+alwaysApply: true
+---
+
+# Do not change AI Agent prompts
+
+AI Agent system/user prompts in this project are **handled manually**. Do not modify them unless the user explicitly asks in the current message.
+
+## Do not change
+
+- **AI Agent** and **Validation AI Agent** node parameters in n8n workflows (especially `text` / system message / prompt fields)
+- Prompt source files that feed those nodes, including:
+  - `n8n/scripts/ai_agent_prompt_draw.md`
+  - `n8n/scripts/ai_agent_prompt_validation.md`
+- Workflow JSON fields that embed those prompts when syncing (e.g. `n8n/workflows/candle-draw.json`)
+
+## When syncing workflows
+
+- Prefer **surgical** updates: change only the nodes required for the task (Fetch OHLC, Peak Analysis, Label Candles, etc.)
+- **Hash-guard** AI Agent / Validation AI Agent nodes before and after any workflow write; abort if they differ
+- Do not “fix” AI failures by rewriting prompts, schemas, or Structured Output Parser instructions unless the user explicitly requests that
+
+## Allowed
+
+- Changing non-prompt nodes, package code (`n8n_candle`), Fetch/Peak/Label scripts, and wiring
+- Discussing prompt issues and proposing text **in chat only** without editing files or workflow prompt fields

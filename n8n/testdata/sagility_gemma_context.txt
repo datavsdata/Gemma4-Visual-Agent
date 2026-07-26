@@ -1,0 +1,25 @@
+Candle attach points (use ONLY these IDs in draw commands).
+Format: c{n}_o=open c{n}_h=high c{n}_l=low c{n}_c=close. Index 0 = leftmost.
+Total candles: 146
+
+c0:G[c0_o,c0_h,c0_l,c0_c] c1:R[c1_o,c1_h,c1_l,c1_c] c2:G[c2_o,c2_h,c2_l,c2_c] c3:R[c3_o,c3_h,c3_l,c3_c] c4:G[c4_o,c4_h,c4_l,c4_c] c5:R[c5_o,c5_h,c5_l,c5_c] c6:G[c6_o,c6_h,c6_l,c6_c] c7:R[c7_o,c7_h,c7_l,c7_c]
+c8:R[c8_o,c8_h,c8_l,c8_c] c9:R[c9_o,c9_h,c9_l,c9_c] c10:G[c10_o,c10_h,c10_l,c10_c] c11:R[c11_o,c11_h,c11_l,c11_c] c12:R[c12_o,c12_h,c12_l,c12_c] c13:R[c13_o,c13_h,c13_l,c13_c] c14:R[c14_o,c14_h,c14_l,c14_c] c15:G[c15_o,c15_h,c15_l,c15_c]
+c16:R[c16_o,c16_h,c16_l,c16_c] c17:R[c17_o,c17_h,c17_l,c17_c] c18:G[c18_o,c18_h,c18_l,c18_c] c19:R[c19_o,c19_h,c19_l,c19_c] c20:R[c20_o,c20_h,c20_l,c20_c] c21:G[c21_o,c21_h,c21_l,c21_c] c22:G[c22_o,c22_h,c22_l,c22_c] c23:G[c23_o,c23_h,c23_l,c23_c]
+c24:G[c24_o,c24_h,c24_l,c24_c] c25:G[c25_o,c25_h,c25_l,c25_c] c26:R[c26_o,c26_h,c26_l,c26_c] c27:R[c27_o,c27_h,c27_l,c27_c] c28:G[c28_o,c28_h,c28_l,c28_c] c29:R[c29_o,c29_h,c29_l,c29_c] c30:G[c30_o,c30_h,c30_l,c30_c] c31:R[c31_o,c31_h,c31_l,c31_c]
+c32:R[c32_o,c32_h,c32_l,c32_c] c33:G[c33_o,c33_h,c33_l,c33_c] c34:R[c34_o,c34_h,c34_l,c34_c] c35:G[c35_o,c35_h,c35_l,c35_c] c36:R[c36_o,c36_h,c36_l,c36_c] c37:R[c37_o,c37_h,c37_l,c37_c] c38:R[c38_o,c38_h,c38_l,c38_c] c39:G[c39_o,c39_h,c39_l,c39_c]
+c40:G[c40_o,c40_h,c40_l,c40_c] c41:G[c41_o,c41_h,c41_l,c41_c] c42:G[c42_o,c42_h,c42_l,c42_c] c43:R[c43_o,c43_h,c43_l,c43_c] c44:G[c44_o,c44_h,c44_l,c44_c] c45:R[c45_o,c45_h,c45_l,c45_c] c46:R[c46_o,c46_h,c46_l,c46_c] c47:R[c47_o,c47_h,c47_l,c47_c]
+c48:R[c48_o,c48_h,c48_l,c48_c] c49:R[c49_o,c49_h,c49_l,c49_c] c50:R[c50_o,c50_h,c50_l,c50_c] c51:R[c51_o,c51_h,c51_l,c51_c] c52:G[c52_o,c52_h,c52_l,c52_c] c53:R[c53_o,c53_h,c53_l,c53_c] c54:R[c54_o,c54_h,c54_l,c54_c] c55:G[c55_o,c55_h,c55_l,c55_c]
+c56:G[c56_o,c56_h,c56_l,c56_c] c57:R[c57_o,c57_h,c57_l,c57_c] c58:R[c58_o,c58_h,c58_l,c58_c] c59:G[c59_o,c59_h,c59_l,c59_c] c60:R[c60_o,c60_h,c60_l,c60_c] c61:G[c61_o,c61_h,c61_l,c61_c] c62:R[c62_o,c62_h,c62_l,c62_c] c63:R[c63_o,c63_h,c63_l,c63_c]
+c64:R[c64_o,c64_h,c64_l,c64_c] c65:R[c65_o,c65_h,c65_l,c65_c] c66:G[c66_o,c66_h,c66_l,c66_c] c67:R[c67_o,c67_h,c67_l,c67_c] c68:G[c68_o,c68_h,c68_l,c68_c] c69:R[c69_o,c69_h,c69_l,c69_c] c70:G[c70_o,c70_h,c70_l,c70_c] c71:G[c71_o,c71_h,c71_l,c71_c]
+c72:G[c72_o,c72_h,c72_l,c72_c] c73:R[c73_o,c73_h,c73_l,c73_c] c74:G[c74_o,c74_h,c74_l,c74_c] c75:G[c75_o,c75_h,c75_l,c75_c] c76:G[c76_o,c76_h,c76_l,c76_c] c77:R[c77_o,c77_h,c77_l,c77_c] c78:R[c78_o,c78_h,c78_l,c78_c] c79:R[c79_o,c79_h,c79_l,c79_c]
+c80:R[c80_o,c80_h,c80_l,c80_c] c81:G[c81_o,c81_h,c81_l,c81_c] c82:G[c82_o,c82_h,c82_l,c82_c] c83:G[c83_o,c83_h,c83_l,c83_c] c84:R[c84_o,c84_h,c84_l,c84_c] c85:R[c85_o,c85_h,c85_l,c85_c] c86:G[c86_o,c86_h,c86_l,c86_c] c87:R[c87_o,c87_h,c87_l,c87_c]
+c88:G[c88_o,c88_h,c88_l,c88_c] c89:R[c89_o,c89_h,c89_l,c89_c] c90:G[c90_o,c90_h,c90_l,c90_c] c91:R[c91_o,c91_h,c91_l,c91_c] c92:G[c92_o,c92_h,c92_l,c92_c] c93:R[c93_o,c93_h,c93_l,c93_c] c94:R[c94_o,c94_h,c94_l,c94_c] c95:R[c95_o,c95_h,c95_l,c95_c]
+c96:G[c96_o,c96_h,c96_l,c96_c] c97:G[c97_o,c97_h,c97_l,c97_c] c98:G[c98_o,c98_h,c98_l,c98_c] c99:R[c99_o,c99_h,c99_l,c99_c] c100:R[c100_o,c100_h,c100_l,c100_c] c101:R[c101_o,c101_h,c101_l,c101_c] c102:R[c102_o,c102_h,c102_l,c102_c] c103:R[c103_o,c103_h,c103_l,c103_c]
+c104:G[c104_o,c104_h,c104_l,c104_c] c105:R[c105_o,c105_h,c105_l,c105_c] c106:R[c106_o,c106_h,c106_l,c106_c] c107:G[c107_o,c107_h,c107_l,c107_c] c108:G[c108_o,c108_h,c108_l,c108_c] c109:R[c109_o,c109_h,c109_l,c109_c] c110:R[c110_o,c110_h,c110_l,c110_c] c111:G[c111_o,c111_h,c111_l,c111_c]
+c112:R[c112_o,c112_h,c112_l,c112_c] c113:G[c113_o,c113_h,c113_l,c113_c] c114:R[c114_o,c114_h,c114_l,c114_c] c115:R[c115_o,c115_h,c115_l,c115_c] c116:G[c116_o,c116_h,c116_l,c116_c] c117:G[c117_o,c117_h,c117_l,c117_c] c118:R[c118_o,c118_h,c118_l,c118_c] c119:G[c119_o,c119_h,c119_l,c119_c]
+c120:R[c120_o,c120_h,c120_l,c120_c] c121:R[c121_o,c121_h,c121_l,c121_c] c122:R[c122_o,c122_h,c122_l,c122_c] c123:G[c123_o,c123_h,c123_l,c123_c] c124:R[c124_o,c124_h,c124_l,c124_c] c125:G[c125_o,c125_h,c125_l,c125_c] c126:R[c126_o,c126_h,c126_l,c126_c] c127:G[c127_o,c127_h,c127_l,c127_c]
+c128:G[c128_o,c128_h,c128_l,c128_c] c129:R[c129_o,c129_h,c129_l,c129_c] c130:R[c130_o,c130_h,c130_l,c130_c] c131:G[c131_o,c131_h,c131_l,c131_c] c132:G[c132_o,c132_h,c132_l,c132_c] c133:R[c133_o,c133_h,c133_l,c133_c] c134:R[c134_o,c134_h,c134_l,c134_c] c135:G[c135_o,c135_h,c135_l,c135_c]
+c136:R[c136_o,c136_h,c136_l,c136_c] c137:G[c137_o,c137_h,c137_l,c137_c] c138:G[c138_o,c138_h,c138_l,c138_c] c139:G[c139_o,c139_h,c139_l,c139_c] c140:R[c140_o,c140_h,c140_l,c140_c] c141:G[c141_o,c141_h,c141_l,c141_c] c142:R[c142_o,c142_h,c142_l,c142_c] c143:G[c143_o,c143_h,c143_l,c143_c]
+c144:R[c144_o,c144_h,c144_l,c144_c] c145:R[c145_o,c145_h,c145_l,c145_c]
+
+Example draw command: {"op":"straight_line","from":"c2_l","to":"c18_l","label":"Support"}
